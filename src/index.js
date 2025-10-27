@@ -17,7 +17,7 @@ app.use(express.json());
 const discovery = new UDPDiscovery(tenant);
 const kvCache = new KVCache(discovery);
 
-// Health check
+// Health check (liveness probe)
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'healthy', 
@@ -25,6 +25,40 @@ app.get('/health', (req, res) => {
     peers: kvCache.getPeers().length,
     timestamp: new Date().toISOString()
   });
+});
+
+// Readiness check (readiness probe)
+app.get('/ready', (req, res) => {
+  try {
+    // Check if discovery is running
+    const peers = kvCache.getPeers();
+    const isDiscoveryRunning = discovery.socket && !discovery.socket.destroyed;
+    
+    // Service is ready if discovery is running (peers can be 0 initially)
+    if (isDiscoveryRunning) {
+      res.json({
+        status: 'ready',
+        tenant,
+        peers: peers.length,
+        discovery: 'running',
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(503).json({
+        status: 'not ready',
+        tenant,
+        discovery: 'not running',
+        timestamp: new Date().toISOString()
+      });
+    }
+  } catch (error) {
+    res.status(503).json({
+      status: 'not ready',
+      tenant,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // KV Cache endpoints

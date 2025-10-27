@@ -1,0 +1,65 @@
+# Template values file for new tenants
+# Usage: 
+#   1. Copy this file: cp examples/template-values.yaml examples/my-tenant-values.yaml
+#   2. Edit the tenant name and customize settings below
+#   3. Deploy: helm install kv-responder-my-tenant ./helm -f examples/my-tenant-values.yaml
+
+# REQUIRED: Change this to your tenant name
+tenant: "CHANGE-ME"
+
+# Basic configuration
+replicaCount: 3
+
+image:
+  repository: kv-responder-oci
+  tag: "latest"
+
+service:
+  type: ClusterIP
+  port: 80
+
+# Ingress configuration (automatically uses /<tenant>/ path)
+ingress:
+  enabled: true
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+  hosts:
+    - host: ""  # Leave empty for default host
+      paths:
+        - path: /{{ .Values.tenant }}(/|$)(.*)
+          pathType: Prefix
+
+# Resource limits (customize based on expected load)
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+# Auto-scaling configuration (customize based on workload pattern)
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  
+  # Scaling behavior (adjust based on workload characteristics)
+  scaleUpStabilizationWindowSeconds: 60    # How long to wait before scaling up
+  scaleUpPercent: 50                       # Max % increase per scale-up event
+  scaleUpPods: 4                          # Max pods to add per scale-up event
+  
+  scaleDownStabilizationWindowSeconds: 300 # How long to wait before scaling down
+  scaleDownPercent: 15                     # Max % decrease per scale-down event
+  scaleDownPods: 2                        # Max pods to remove per scale-down event
+
+# Optional: Enable network isolation (recommended for production)
+networkPolicy:
+  enabled: false  # Set to true for network-level tenant isolation
+
+# Optional: Enable metrics collection
+metrics:
+  enabled: false  # Set to true to enable Prometheus metrics

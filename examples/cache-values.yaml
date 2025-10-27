@@ -1,0 +1,49 @@
+# Example values file for deploying with tenant "cache"
+# Usage: helm install kv-cache ./helm -f examples/cache-values.yaml
+
+tenant: "cache"
+
+replicaCount: 2
+
+image:
+  repository: kv-responder-oci
+  tag: "latest"
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+  hosts:
+    - host: ""
+      paths:
+        - path: /cache(/|$)(.*)
+          pathType: Prefix
+
+resources:
+  limits:
+    cpu: 250m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 85
+  
+  # Conservative scaling for cache workloads
+  scaleUpStabilizationWindowSeconds: 120  # Wait longer to avoid cache churn
+  scaleUpPercent: 25                      # Scale up gradually
+  scaleUpPods: 2                         # Add fewer pods at once
+  
+  scaleDownStabilizationWindowSeconds: 900 # Very conservative scale down
+  scaleDownPercent: 10                    # Scale down slowly
+  scaleDownPods: 1                       # Remove one pod at a time

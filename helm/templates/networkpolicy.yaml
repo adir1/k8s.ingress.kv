@@ -1,0 +1,51 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "kv-responder.fullname" . }}
+  labels:
+    {{- include "kv-responder.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "kv-responder.selectorLabels" . | nindent 6 }}
+      ingress-group: {{ .Values.tenant }}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow HTTP traffic from anywhere (for ingress)
+  - from: []
+    ports:
+    - protocol: TCP
+      port: {{ .Values.service.targetPort }}
+  # Allow UDP discovery traffic only from same tenant
+  - from:
+    - podSelector:
+        matchLabels:
+          ingress-group: {{ .Values.tenant }}
+    ports:
+    - protocol: UDP
+      port: 9999
+  egress:
+  # Allow all outbound HTTP traffic (for cache sync)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: {{ .Values.service.targetPort }}
+  # Allow UDP discovery traffic only to same tenant
+  - to:
+    - podSelector:
+        matchLabels:
+          ingress-group: {{ .Values.tenant }}
+    ports:
+    - protocol: UDP
+      port: 9999
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+{{- end }}

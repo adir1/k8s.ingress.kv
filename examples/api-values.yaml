@@ -1,0 +1,49 @@
+# Example values file for deploying with tenant "api"
+# Usage: helm install kv-api ./helm -f examples/api-values.yaml
+
+tenant: "api"
+
+replicaCount: 5
+
+image:
+  repository: kv-responder-oci
+  tag: "latest"
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+  hosts:
+    - host: ""
+      paths:
+        - path: /api(/|$)(.*)
+          pathType: Prefix
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 15
+  targetCPUUtilizationPercentage: 60
+  targetMemoryUtilizationPercentage: 70
+  
+  # Aggressive scaling for API workloads
+  scaleUpStabilizationWindowSeconds: 30   # Scale up quickly for API load
+  scaleUpPercent: 100                     # Double capacity if needed
+  scaleUpPods: 5                         # Add up to 5 pods at once
+  
+  scaleDownStabilizationWindowSeconds: 600 # Wait longer before scaling down
+  scaleDownPercent: 20                    # Scale down more conservatively
+  scaleDownPods: 2

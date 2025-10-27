@@ -19,8 +19,8 @@ const kvCache = new KVCache(discovery);
 
 // Health check (liveness probe)
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'healthy', 
+  res.json({
+    status: 'healthy',
     tenant,
     peers: kvCache.getPeers().length,
     timestamp: new Date().toISOString()
@@ -33,7 +33,7 @@ app.get('/ready', (req, res) => {
     // Check if discovery is running
     const peers = kvCache.getPeers();
     const isDiscoveryRunning = discovery.socket && !discovery.socket.destroyed;
-    
+
     // Service is ready if discovery is running (peers can be 0 initially)
     if (isDiscoveryRunning) {
       res.json({
@@ -109,10 +109,59 @@ app.get('/kv', async (req, res) => {
 
 // Peers info
 app.get('/peers', (req, res) => {
-  res.json({ 
+  res.json({
     peers: kvCache.getPeers(),
     count: kvCache.getPeers().length
   });
+});
+
+// Diagnostic endpoint - detailed request information
+app.get('/diag', (req, res) => {
+  const diagnosticInfo = {
+    timestamp: new Date().toISOString(),
+    request: {
+      method: req.method,
+      url: req.url,
+      originalUrl: req.originalUrl,
+      baseUrl: req.baseUrl,
+      path: req.path,
+      protocol: req.protocol,
+      hostname: req.hostname,
+      ip: req.ip,
+      ips: req.ips,
+      headers: req.headers,
+      query: req.query,
+      params: req.params,
+      userAgent: req.get('User-Agent'),
+      contentType: req.get('Content-Type'),
+      acceptLanguage: req.get('Accept-Language'),
+      referer: req.get('Referer'),
+      xForwardedFor: req.get('X-Forwarded-For'),
+      xRealIp: req.get('X-Real-IP')
+    },
+    tenant: {
+      name: tenant,
+      environment: process.env.NODE_ENV || 'development',
+      namespace: process.env.NAMESPACE || 'default',
+      podName: process.env.HOSTNAME || process.env.POD_NAME || 'unknown',
+      serviceName: process.env.SERVICE_NAME || 'kv-responder'
+    },
+    service: {
+      port: port,
+      uptime: process.uptime(),
+      nodeVersion: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      memory: process.memoryUsage(),
+      peers: kvCache.getPeers(),
+      peerCount: kvCache.getPeers().length,
+      cacheSize: kvCache.getCacheSize(),
+      requestRate: kvCache.getRequestRate(),
+      discoveryStatus: discovery.socket && !discovery.socket.destroyed ? 'running' : 'stopped'
+    }
+  };
+
+  res.json(diagnosticInfo);
 });
 
 // Metrics endpoint for HPA custom metrics
@@ -120,7 +169,7 @@ app.get('/metrics', (req, res) => {
   const peers = kvCache.getPeers();
   const cacheSize = kvCache.getCacheSize();
   const uptime = process.uptime();
-  
+
   // Prometheus-style metrics
   const metrics = [
     `# HELP kv_cache_size Number of keys in local cache`,
@@ -139,7 +188,7 @@ app.get('/metrics', (req, res) => {
     `# TYPE kv_requests_per_second gauge`,
     `kv_requests_per_second{tenant="${tenant}"} ${kvCache.getRequestRate()}`,
   ].join('\n');
-  
+
   res.set('Content-Type', 'text/plain');
   res.send(metrics);
 });
@@ -148,7 +197,7 @@ app.get('/metrics', (req, res) => {
 app.listen(port, () => {
   console.log(`KV Responder running on port ${port}`);
   console.log(`Tenant: ${tenant}`);
-  
+
   // Start pod discovery
   discovery.start();
 });

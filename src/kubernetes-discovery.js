@@ -2,8 +2,10 @@ const dgram = require('dgram');
 const os = require('os');
 
 class UDPDiscovery {
-    constructor(tenant) {
+    constructor(tenant, logger, metrics) {
         this.tenant = tenant;
+        this.logger = logger;
+        this.metrics = metrics;
         this.podName = process.env.HOSTNAME || os.hostname();
         this.podIP = process.env.POD_IP || this.getLocalIP();
         this.discoveryPort = parseInt(process.env.DISCOVERY_PORT || '9999');
@@ -45,21 +47,29 @@ class UDPDiscovery {
 
     setupSocket() {
         this.socket.on('error', (err) => {
-            console.error('UDP Discovery socket error:', err.message);
+            this.logger.error({ err, tenant: this.tenant }, 'UDP Discovery socket error');
         });
 
         this.socket.on('message', (msg, rinfo) => {
             try {
                 const message = JSON.parse(msg.toString());
+                this.metrics.recordDiscoveryMessage('discovery', 'received');
                 this.handleDiscoveryMessage(message, rinfo);
             } catch (error) {
-                // Ignore invalid messages
+                this.logger.debug({ 
+                    err: error, 
+                    remoteAddress: rinfo.address 
+                }, 'Received invalid discovery message');
             }
         });
 
         this.socket.on('listening', () => {
             const address = this.socket.address();
-            console.log(`UDP Discovery listening on ${address.address}:${address.port}`);
+            this.logger.info({ 
+                address: address.address, 
+                port: address.port, 
+                tenant: this.tenant 
+            }, 'UDP Discovery listening');
 
             // Enable broadcast
             this.socket.setBroadcast(true);
@@ -68,9 +78,16 @@ class UDPDiscovery {
             const multicastAddress = this.getTenantMulticastAddress();
             try {
                 this.socket.addMembership(multicastAddress);
-                console.log(`Joined multicast group: ${multicastAddress} for tenant: ${this.tenant}`);
+                this.logger.info({ 
+                    multicastAddress, 
+                    tenant: this.tenant 
+                }, 'Joined multicast group');
             } catch (error) {
-                console.warn('Failed to join multicast group:', error.message);
+                this.logger.warn({ 
+                    err: error, 
+                    multicastAddress, 
+                    tenant: this.tenant 
+                }, 'Failed to join multicast group');
             }
         });
     }
@@ -95,7 +112,12 @@ class UDPDiscovery {
         };
 
         if (isNewPeer) {
-            console.log(`Discovered new peer: ${peer.name} (${peer.ip}:${peer.port})`);
+            this.logger.info({ 
+                peerName: peer.name, 
+                peerIP: peer.ip, 
+                peerPort: peer.port, 
+                tenant: this.tenant 
+            }, 'Discovered new peer');
             this.peers.set(peerKey, peer);
             this.notifyPeerDiscovered(peer, 'added');
         } else {
@@ -109,8 +131,12 @@ class UDPDiscovery {
     }
 
     async start() {
-        console.log(`Starting UDP discovery for tenant: ${this.tenant}`);
-        console.log(`Pod: ${this.podName} (${this.podIP}:${this.servicePort})`);
+        this.logger.info({ 
+            tenant: this.tenant, 
+            podName: this.podName, 
+            podIP: this.podIP, 
+            servicePort: this.servicePort 
+        }, 'Starting UDP discovery');
 
         try {
             // Bind to discovery port
@@ -131,7 +157,10 @@ class UDPDiscovery {
             this.broadcastDiscovery();
 
         } catch (error) {
-            console.error('Failed to start UDP discovery:', error.message);
+            this.logger.error({ 
+                err: error, 
+                tenant: this.tenant 
+            }, 'Failed to start UDP discovery');
         }
     }
 
@@ -158,7 +187,13 @@ class UDPDiscovery {
         // Send to tenant-specific multicast address
         this.socket.send(message, this.discoveryPort, multicastAddress, (err) => {
             if (err) {
-                console.warn('Failed to send discovery multicast:', err.message);
+                this.logger.warn({ 
+                    err: error, 
+                    multicastAddress, 
+                    tenant: this.tenant 
+                }, 'Failed to send discovery multicast');
+            } else {
+                this.metrics.recordDiscoveryMessage('discovery', 'sent');
             }
         });
 
@@ -166,7 +201,11 @@ class UDPDiscovery {
         const broadcastAddress = this.getBroadcastAddress();
         this.socket.send(message, this.discoveryPort, broadcastAddress, (err) => {
             if (err) {
-                console.warn('Failed to send discovery broadcast:', err.message);
+                this.logger.warn({ 
+                    err: error, 
+                    broadcastAddress, 
+                    tenant: this.tenant 
+                }, 'Failed to send discovery broadcast');
             }
         });
     }
@@ -216,7 +255,10 @@ class UDPDiscovery {
 
         for (const [name, peer] of this.peers) {
             if (now - peer.lastSeen > staleThreshold) {
-                console.log(`Removing stale peer: ${name}`);
+                this.logger.info({ 
+                    peerName: name, 
+                    tenant: this.tenant 
+                }, 'Removing stale peer');
                 this.peers.delete(name);
                 this.notifyPeerDiscovered(peer, 'removed');
             }
@@ -228,7 +270,10 @@ class UDPDiscovery {
             try {
                 callback(peer, action);
             } catch (error) {
-                console.error('Error in discovery callback:', error.message);
+                this.logger.error({ 
+                    err: error, 
+                    tenant: this.tenant 
+                }, 'Error in discovery callback');
             }
         });
     }
@@ -250,7 +295,7 @@ class UDPDiscovery {
             this.socket.close();
         }
 
-        console.log('UDP discovery stopped');
+        this.logger.info({ tenant: this.tenant }, 'UDP discovery stopped');
     }
 }
 

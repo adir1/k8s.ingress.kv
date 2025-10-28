@@ -92,6 +92,18 @@ env:
   PORT: "3000"
   NODE_ENV: "production"
 
+# Logging configuration
+logging:
+  level: "info"  # debug, info, warn, error
+  format: "json"  # json, pretty
+
+# Distributed tracing configuration
+tracing:
+  enabled: true
+  jaeger:
+    enabled: false
+    endpoint: "http://jaeger-collector:14268/api/traces"
+
 # RBAC permissions (not needed for UDP discovery)
 rbac:
   create: false
@@ -103,12 +115,24 @@ networkPolicy:
 
 # Metrics configuration for monitoring and custom HPA metrics
 metrics:
-  enabled: false
+  enabled: true
   serviceMonitor:
-    enabled: false
+    enabled: true
     interval: 30s
     scrapeTimeout: 10s
     labels: {}
     annotations: {}
     relabelings: []
     metricRelabelings: []
+  
+  # Grafana dashboard configuration
+  grafanaDashboard:
+    enabled: true
+    labels: {}
+    annotations: {}
+  
+  # Prometheus alerting rules
+  prometheusRules:
+    enabled: true
+    labels: {}
+    annotations: {}

@@ -1,0 +1,161 @@
+{{- if and .Values.metrics.enabled .Values.metrics.grafanaDashboard.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kv-responder.fullname" . }}-dashboard
+  labels:
+    {{- include "kv-responder.labels" . | nindent 4 }}
+    tenant: {{ .Values.tenant }}
+    grafana_dashboard: "1"
+  annotations:
+    grafana_folder: "KV Responder"
+data:
+  kv-responder-dashboard.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "KV Responder - {{ .Values.tenant }}",
+        "tags": ["kv-responder", "{{ .Values.tenant }}"],
+        "style": "dark",
+        "timezone": "browser",
+        "refresh": "30s",
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "panels": [
+          {
+            "id": 1,
+            "title": "HTTP Requests Rate",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "rate(kv_http_requests_total{tenant=\"{{ .Values.tenant }}\"}[5m])",
+                "legendFormat": "{{`{{ method }} {{ route }}`}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "reqps"
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+          },
+          {
+            "id": 2,
+            "title": "HTTP Request Duration",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.95, rate(kv_http_request_duration_seconds_bucket{tenant=\"{{ .Values.tenant }}\"}[5m]))",
+                "legendFormat": "95th percentile"
+              },
+              {
+                "expr": "histogram_quantile(0.50, rate(kv_http_request_duration_seconds_bucket{tenant=\"{{ .Values.tenant }}\"}[5m]))",
+                "legendFormat": "50th percentile"
+              }
+            ],
+            "yAxes": [
+              {
+                "unit": "s"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+          },
+          {
+            "id": 3,
+            "title": "Cache Operations",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(kv_cache_operations_total{tenant=\"{{ .Values.tenant }}\"}[5m])",
+                "legendFormat": "{{`{{ operation }} - {{ result }}`}}"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+          },
+          {
+            "id": 4,
+            "title": "Peer Discovery",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "kv_peers_count{tenant=\"{{ .Values.tenant }}\"}",
+                "legendFormat": "Active Peers"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+          },
+          {
+            "id": 5,
+            "title": "Cache Size",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "kv_cache_size{tenant=\"{{ .Values.tenant }}\"}",
+                "legendFormat": "{{`{{ pod }}`}}"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+          },
+          {
+            "id": 6,
+            "title": "Replication Operations",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(kv_replication_operations_total{tenant=\"{{ .Values.tenant }}\"}[5m])",
+                "legendFormat": "{{`{{ operation }} - {{ result }}`}}"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+          },
+          {
+            "id": 7,
+            "title": "Memory Usage",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "kv_process_resident_memory_bytes{tenant=\"{{ .Values.tenant }}\"}",
+                "legendFormat": "{{`{{ pod }}`}}"
+              }
+            ],
+            "yAxes": [
+              {
+                "unit": "bytes"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24}
+          },
+          {
+            "id": 8,
+            "title": "CPU Usage",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(kv_process_cpu_seconds_total{tenant=\"{{ .Values.tenant }}\"}[5m]) * 100",
+                "legendFormat": "{{`{{ pod }}`}}"
+              }
+            ],
+            "yAxes": [
+              {
+                "unit": "percent"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24}
+          }
+        ],
+        "templating": {
+          "list": [
+            {
+              "name": "tenant",
+              "type": "constant",
+              "current": {
+                "value": "{{ .Values.tenant }}"
+              }
+            }
+          ]
+        }
+      }
+    }
+{{- end }}

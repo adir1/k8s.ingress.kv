@@ -15,6 +15,8 @@ that scale independently.
 - **Advanced Auto-Scaling**: Tenant-specific HPA with custom metrics and scaling
   behaviors
 - **Network Isolation**: Optional NetworkPolicies for complete tenant separation
+- **Comprehensive Monitoring**: Prometheus metrics, structured logging, and Grafana dashboards with tenant context
+- **Distributed Tracing**: OpenTelemetry integration for request tracing
 - **Production Ready**: Health checks, metrics, security contexts, and resource
   limits
 
@@ -76,6 +78,9 @@ Each tenant has its own HPA with workload-optimized behaviors:
 | `/<tenant>/health`  | GET    | Health and cluster status |
 | `/<tenant>/peers`   | GET    | Show discovered peers     |
 | `/<tenant>/metrics` | GET    | Prometheus metrics        |
+| `/<tenant>/diag`    | GET    | Diagnostic information    |
+| `/<tenant>/admin/log-levels` | GET | Get current log levels |
+| `/<tenant>/admin/log-levels` | PUT | Change log levels dynamically |
 
 ```bash
 # Example usage
@@ -120,6 +125,38 @@ helm template kv-responder-d2 ./helm
 helm get values kv-responder-d2 --all
 ```
 
+## Monitoring & Observability
+
+The KV Responder includes comprehensive monitoring capabilities optimized for Prometheus/Grafana:
+
+### Features
+
+- **Structured Logging**: JSON logs with tenant context for all operations
+- **Prometheus Metrics**: HTTP requests, cache operations, peer discovery, and replication metrics
+- **Grafana Dashboards**: Pre-built dashboards with tenant-specific views
+- **Alerting Rules**: Production-ready alerts for errors, latency, and availability
+- **Distributed Tracing**: OpenTelemetry integration for request flow analysis
+
+### Quick Setup
+
+```bash
+# Deploy with full monitoring
+helm install kv-responder-prod ./helm \
+  --values examples/monitoring-values.yaml \
+  --set tenant=production
+```
+
+### Key Metrics
+
+- `kv_http_requests_total` - Request count by tenant, method, status
+- `kv_cache_operations_total` - Cache hits/misses by tenant
+- `kv_peers_count` - Active peer discovery by tenant
+- `kv_replication_operations_total` - Replication success/failure rates
+
+All metrics include tenant labels for multi-tenant monitoring.
+
+See [docs/MONITORING.md](docs/MONITORING.md) for complete setup guide.
+
 ## Configuration
 
 ### Environment Variables
@@ -127,6 +164,8 @@ helm get values kv-responder-d2 --all
 - `TENANT` - Deployment tenant (required)
 - `PORT` - Service port (default: 3000)
 - `DISCOVERY_PORT` - UDP discovery port (default: 9999)
+- `LOG_LEVEL` - Logging level (debug, info, warn, error)
+- `JAEGER_ENDPOINT` - Jaeger tracing endpoint (optional)
 
 ### Development
 

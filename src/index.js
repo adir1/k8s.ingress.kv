@@ -1,24 +1,73 @@
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const pinoHttp = require('pino-http');
 const UDPDiscovery = require('./kubernetes-discovery');
 const KVCache = require('./kv-cache');
+const { createLogger } = require('./logger');
+const MetricsCollector = require('./metrics');
+const { initializeTracing } = require('./tracing');
 
 const app = express();
 const port = process.env.PORT || 3000;
 const tenant = process.env.TENANT || 'default';
+
+// Initialize tracing
+const tracing = initializeTracing(tenant);
+
+// Initialize logger and metrics
+const { createLogger, createChildLogger, getLogLevels, setLogLevel, getLoggerModules } = require('./logger');
+const logger = createLogger(tenant);
+const metrics = new MetricsCollector(tenant);
 
 // Middleware
 app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
-// Initialize services
-const discovery = new UDPDiscovery(tenant);
-const kvCache = new KVCache(discovery);
+// Add request logging with tenant context
+app.use(pinoHttp({
+  logger: httpLogger,
+  customLogLevel: function (req, res, err) {
+    if (res.statusCode >= 400 && res.statusCode < 500) {
+      return 'warn';
+    } else if (res.statusCode >= 500 || err) {
+      return 'error';
+    }
+    return 'info';
+  },
+  customSuccessMessage: function (req, res) {
+    return `${req.method} ${req.url} completed`;
+  },
+  customErrorMessage: function (req, res, err) {
+    return `${req.method} ${req.url} errored`;
+  }
+}));
+
+// Metrics middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  
+  res.on('finish', () => {
+    const duration = (Date.now() - start) / 1000;
+    const route = req.route ? req.route.path : req.path;
+    metrics.recordHttpRequest(req.method, route, res.statusCode, duration);
+  });
+  
+  next();
+});
+
+// Initialize services with child loggers
+const discoveryLogger = createChildLogger(logger, 'discovery');
+const cacheLogger = createChildLogger(logger, 'cache');
+const httpLogger = createChildLogger(logger, 'http');
+
+const discovery = new UDPDiscovery(tenant, discoveryLogger, metrics);
+const kvCache = new KVCache(discovery, cacheLogger, metrics);
 
 // Health check (liveness probe)
 app.get('/health', (req, res) => {
+  req.log.debug('Health check requested');
   res.json({
     status: 'healthy',
     tenant,
@@ -36,6 +85,7 @@ app.get('/ready', (req, res) => {
 
     // Service is ready if discovery is running (peers can be 0 initially)
     if (isDiscoveryRunning) {
+      req.log.debug({ peers: peers.length }, 'Readiness check passed');
       res.json({
         status: 'ready',
         tenant,
@@ -44,6 +94,7 @@ app.get('/ready', (req, res) => {
         timestamp: new Date().toISOString()
       });
     } else {
+      req.log.warn('Readiness check failed - discovery not running');
       res.status(503).json({
         status: 'not ready',
         tenant,
@@ -52,6 +103,7 @@ app.get('/ready', (req, res) => {
       });
     }
   } catch (error) {
+    req.log.error({ err: error }, 'Readiness check failed with error');
     res.status(503).json({
       status: 'not ready',
       tenant,
@@ -64,34 +116,57 @@ app.get('/ready', (req, res) => {
 // KV Cache endpoints
 app.get('/kv/:key', async (req, res) => {
   kvCache.trackRequest();
+  const key = req.params.key;
+  
   try {
-    const value = await kvCache.get(req.params.key);
+    req.log.debug({ key }, 'Getting key from cache');
+    const value = await kvCache.get(key);
     if (value === null) {
+      req.log.info({ key }, 'Key not found');
+      metrics.recordCacheOperation('get', 'miss');
       return res.status(404).json({ error: 'Key not found' });
     }
-    res.json({ key: req.params.key, value });
+    req.log.info({ key }, 'Key retrieved successfully');
+    metrics.recordCacheOperation('get', 'hit');
+    res.json({ key, value });
   } catch (error) {
+    req.log.error({ err: error, key }, 'Error getting key from cache');
+    metrics.recordCacheOperation('get', 'error');
     res.status(500).json({ error: error.message });
   }
 });
 
 app.put('/kv/:key', async (req, res) => {
   kvCache.trackRequest();
+  const key = req.params.key;
+  
   try {
     const { value } = req.body;
-    await kvCache.set(req.params.key, value);
-    res.json({ key: req.params.key, value, status: 'stored' });
+    req.log.debug({ key }, 'Setting key in cache');
+    await kvCache.set(key, value);
+    req.log.info({ key }, 'Key stored successfully');
+    metrics.recordCacheOperation('set', 'success');
+    res.json({ key, value, status: 'stored' });
   } catch (error) {
+    req.log.error({ err: error, key }, 'Error setting key in cache');
+    metrics.recordCacheOperation('set', 'error');
     res.status(500).json({ error: error.message });
   }
 });
 
 app.delete('/kv/:key', async (req, res) => {
   kvCache.trackRequest();
+  const key = req.params.key;
+  
   try {
-    await kvCache.delete(req.params.key);
-    res.json({ key: req.params.key, status: 'deleted' });
+    req.log.debug({ key }, 'Deleting key from cache');
+    await kvCache.delete(key);
+    req.log.info({ key }, 'Key deleted successfully');
+    metrics.recordCacheOperation('delete', 'success');
+    res.json({ key, status: 'deleted' });
   } catch (error) {
+    req.log.error({ err: error, key }, 'Error deleting key from cache');
+    metrics.recordCacheOperation('delete', 'error');
     res.status(500).json({ error: error.message });
   }
 });
@@ -99,10 +174,16 @@ app.delete('/kv/:key', async (req, res) => {
 // List all keys
 app.get('/kv', async (req, res) => {
   kvCache.trackRequest();
+  
   try {
+    req.log.debug('Listing all keys');
     const keys = await kvCache.keys();
+    req.log.info({ count: keys.length }, 'Keys listed successfully');
+    metrics.recordCacheOperation('list', 'success');
     res.json({ keys });
   } catch (error) {
+    req.log.error({ err: error }, 'Error listing keys');
+    metrics.recordCacheOperation('list', 'error');
     res.status(500).json({ error: error.message });
   }
 });
@@ -164,53 +245,94 @@ app.get('/diag', (req, res) => {
   res.json(diagnosticInfo);
 });
 
-// Metrics endpoint for HPA custom metrics
-app.get('/metrics', (req, res) => {
-  const peers = kvCache.getPeers();
-  const cacheSize = kvCache.getCacheSize();
-  const uptime = process.uptime();
+// Log level management endpoints
+app.get('/admin/log-levels', (req, res) => {
+  try {
+    req.log.debug('Log levels requested');
+    const levels = getLogLevels();
+    const modules = getLoggerModules();
+    
+    res.json({
+      current_levels: levels,
+      available_modules: modules,
+      available_levels: ['trace', 'debug', 'info', 'warn', 'error', 'fatal'],
+      tenant: tenant
+    });
+  } catch (error) {
+    req.log.error({ err: error }, 'Error getting log levels');
+    res.status(500).json({ error: error.message });
+  }
+});
 
-  // Prometheus-style metrics
-  const metrics = [
-    `# HELP kv_cache_size Number of keys in local cache`,
-    `# TYPE kv_cache_size gauge`,
-    `kv_cache_size{tenant="${tenant}"} ${cacheSize}`,
-    ``,
-    `# HELP kv_peers_count Number of discovered peers`,
-    `# TYPE kv_peers_count gauge`,
-    `kv_peers_count{tenant="${tenant}"} ${peers.length}`,
-    ``,
-    `# HELP kv_uptime_seconds Service uptime in seconds`,
-    `# TYPE kv_uptime_seconds counter`,
-    `kv_uptime_seconds{tenant="${tenant}"} ${uptime}`,
-    ``,
-    `# HELP kv_requests_per_second Estimated requests per second`,
-    `# TYPE kv_requests_per_second gauge`,
-    `kv_requests_per_second{tenant="${tenant}"} ${kvCache.getRequestRate()}`,
-  ].join('\n');
+app.put('/admin/log-levels', (req, res) => {
+  try {
+    const { level, module } = req.body;
+    
+    if (!level) {
+      return res.status(400).json({ 
+        error: 'Missing required field: level',
+        available_levels: ['trace', 'debug', 'info', 'warn', 'error', 'fatal']
+      });
+    }
 
-  res.set('Content-Type', 'text/plain');
-  res.send(metrics);
+    req.log.info({ level, module }, 'Changing log level');
+    const updated = setLogLevel(level, module);
+    
+    req.log.info({ updated }, 'Log levels updated successfully');
+    res.json({
+      message: 'Log levels updated successfully',
+      updated: updated,
+      tenant: tenant
+    });
+  } catch (error) {
+    req.log.error({ err: error }, 'Error setting log levels');
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Metrics endpoint for Prometheus scraping
+app.get('/metrics', async (req, res) => {
+  try {
+    // Update current metrics
+    const peers = kvCache.getPeers();
+    const cacheSize = kvCache.getCacheSize();
+    
+    metrics.updateCacheSize(cacheSize);
+    metrics.updatePeersCount(peers.length);
+    
+    req.log.debug('Metrics requested');
+    res.set('Content-Type', 'text/plain');
+    res.send(await metrics.getMetrics());
+  } catch (error) {
+    req.log.error({ err: error }, 'Error generating metrics');
+    res.status(500).send('Error generating metrics');
+  }
 });
 
 // Start server
 app.listen(port, () => {
-  console.log(`KV Responder running on port ${port}`);
-  console.log(`Tenant: ${tenant}`);
+  logger.info({ port, tenant }, 'KV Responder started successfully');
 
   // Start pod discovery
   discovery.start();
 });
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('Received SIGTERM, shutting down gracefully');
+const gracefulShutdown = (signal) => {
+  logger.info({ signal }, 'Received shutdown signal, shutting down gracefully');
+  
   discovery.stop();
-  process.exit(0);
-});
+  
+  // Stop tracing
+  if (tracing) {
+    tracing.shutdown()
+      .then(() => logger.info('Tracing shutdown complete'))
+      .catch((error) => logger.error({ err: error }, 'Error shutting down tracing'))
+      .finally(() => process.exit(0));
+  } else {
+    process.exit(0);
+  }
+};
 
-process.on('SIGINT', () => {
-  console.log('Received SIGINT, shutting down gracefully');
-  discovery.stop();
-  process.exit(0);
-});
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

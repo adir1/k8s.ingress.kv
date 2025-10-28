@@ -1,0 +1,100 @@
+{{- if and .Values.metrics.enabled .Values.metrics.prometheusRules.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "kv-responder.fullname" . }}
+  labels:
+    {{- include "kv-responder.labels" . | nindent 4 }}
+    tenant: {{ .Values.tenant }}
+    {{- with .Values.metrics.prometheusRules.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+  - name: kv-responder.{{ .Values.tenant }}.rules
+    interval: 30s
+    rules:
+    # High error rate alert
+    - alert: KVResponderHighErrorRate
+      expr: |
+        (
+          rate(kv_http_requests_total{tenant="{{ .Values.tenant }}", status_code=~"5.."}[5m]) /
+          rate(kv_http_requests_total{tenant="{{ .Values.tenant }}"}[5m])
+        ) > 0.1
+      for: 2m
+      labels:
+        severity: warning
+        tenant: {{ .Values.tenant }}
+        service: kv-responder
+      annotations:
+        summary: "High error rate detected for KV Responder tenant {{ .Values.tenant }}"
+        description: "Error rate is {{`{{ $value | humanizePercentage }}`}} for tenant {{ .Values.tenant }}"
+
+    # High response time alert
+    - alert: KVResponderHighLatency
+      expr: |
+        histogram_quantile(0.95, rate(kv_http_request_duration_seconds_bucket{tenant="{{ .Values.tenant }}"}[5m])) > 1
+      for: 5m
+      labels:
+        severity: warning
+        tenant: {{ .Values.tenant }}
+        service: kv-responder
+      annotations:
+        summary: "High latency detected for KV Responder tenant {{ .Values.tenant }}"
+        description: "95th percentile latency is {{`{{ $value }}`}}s for tenant {{ .Values.tenant }}"
+
+    # No peers discovered alert
+    - alert: KVResponderNoPeers
+      expr: |
+        kv_peers_count{tenant="{{ .Values.tenant }}"} == 0
+      for: 5m
+      labels:
+        severity: warning
+        tenant: {{ .Values.tenant }}
+        service: kv-responder
+      annotations:
+        summary: "No peers discovered for KV Responder tenant {{ .Values.tenant }}"
+        description: "KV Responder instance has not discovered any peers for 5 minutes"
+
+    # High cache miss rate alert
+    - alert: KVResponderHighCacheMissRate
+      expr: |
+        (
+          rate(kv_cache_operations_total{tenant="{{ .Values.tenant }}", operation="get", result="miss"}[5m]) /
+          rate(kv_cache_operations_total{tenant="{{ .Values.tenant }}", operation="get"}[5m])
+        ) > 0.8
+      for: 5m
+      labels:
+        severity: info
+        tenant: {{ .Values.tenant }}
+        service: kv-responder
+      annotations:
+        summary: "High cache miss rate for KV Responder tenant {{ .Values.tenant }}"
+        description: "Cache miss rate is {{`{{ $value | humanizePercentage }}`}} for tenant {{ .Values.tenant }}"
+
+    # Replication failures alert
+    - alert: KVResponderReplicationFailures
+      expr: |
+        rate(kv_replication_operations_total{tenant="{{ .Values.tenant }}", result="error"}[5m]) > 0.1
+      for: 2m
+      labels:
+        severity: warning
+        tenant: {{ .Values.tenant }}
+        service: kv-responder
+      annotations:
+        summary: "Replication failures detected for KV Responder tenant {{ .Values.tenant }}"
+        description: "Replication error rate is {{`{{ $value }}`}} errors/sec for tenant {{ .Values.tenant }}"
+
+    # Pod down alert
+    - alert: KVResponderPodDown
+      expr: |
+        up{job=~".*kv-responder.*", tenant="{{ .Values.tenant }}"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        tenant: {{ .Values.tenant }}
+        service: kv-responder
+      annotations:
+        summary: "KV Responder pod is down for tenant {{ .Values.tenant }}"
+        description: "KV Responder pod {{`{{ $labels.pod }}`}} is down for tenant {{ .Values.tenant }}"
+{{- end }}

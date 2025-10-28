@@ -1,0 +1,109 @@
+# Minimal values for clusters without Jaeger/Elasticsearch
+# This configuration works with just Kubernetes - no external monitoring services required
+
+tenant: "production"
+
+replicaCount: 3
+
+image:
+  repository: kv-responder-oci
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+# Basic resource limits
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+# Enable autoscaling
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+
+# Basic service configuration
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+
+# Enable ingress if you have an ingress controller
+ingress:
+  enabled: true
+  className: "nginx"  # Change to your ingress class
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+  hosts:
+    - host: "your-domain.com"  # Change to your domain
+      paths:
+        - path: /production(/|$)(.*)
+          pathType: Prefix
+
+# Environment variables
+env:
+  PORT: "3000"
+  NODE_ENV: "production"
+
+# Logging configuration - logs go to stdout/stderr
+logging:
+  level: "info"
+  format: "json"
+
+# Disable tracing completely
+tracing:
+  enabled: false
+  jaeger:
+    enabled: false
+
+# Minimal metrics - just expose the endpoint
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: false  # Enable only if you have Prometheus with ServiceMonitor support
+  grafanaDashboard:
+    enabled: false  # Enable only if you have Grafana
+  prometheusRules:
+    enabled: false  # Enable only if you have AlertManager
+
+# Security context
+podSecurityContext:
+  fsGroup: 1001
+  runAsNonRoot: true
+  runAsUser: 1001
+
+securityContext:
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1001
+  allowPrivilegeEscalation: false
+
+# Network policy for tenant isolation (optional)
+networkPolicy:
+  enabled: false  # Enable if you want network isolation
+
+# Pod anti-affinity for better distribution
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - kv-responder
+          - key: ingress-group
+            operator: In
+            values:
+            - production
+        topologyKey: kubernetes.io/hostname

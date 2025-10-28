@@ -1,0 +1,168 @@
+# Example values for KV Responder with full monitoring stack
+# This configuration enables comprehensive observability for Prometheus/Grafana
+
+# Tenant configuration
+tenant: "production"
+
+# Replica configuration for high availability
+replicaCount: 3
+
+# Image configuration
+image:
+  repository: kv-responder-oci
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+# Resource limits for production workload
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+# Autoscaling configuration
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    # Add tenant-specific rate limiting
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+  hosts:
+    - host: "kv-api.example.com"
+      paths:
+        - path: /production(/|$)(.*)
+          pathType: Prefix
+  tls:
+    - secretName: kv-api-tls
+      hosts:
+        - kv-api.example.com
+
+# Environment variables
+env:
+  PORT: "3000"
+  NODE_ENV: "production"
+
+# Logging configuration
+logging:
+  level: "info"
+  format: "json"
+
+# Distributed tracing configuration
+tracing:
+  enabled: true
+  jaeger:
+    enabled: true
+    endpoint: "http://jaeger-collector.monitoring:14268/api/traces"
+
+# Comprehensive metrics configuration
+metrics:
+  enabled: true
+  
+  # ServiceMonitor for Prometheus scraping
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    scrapeTimeout: 10s
+    labels:
+      release: prometheus
+    annotations: {}
+    relabelings:
+      # Add cluster label
+      - sourceLabels: []
+        targetLabel: cluster
+        replacement: "production"
+      # Add environment label
+      - sourceLabels: []
+        targetLabel: environment
+        replacement: "prod"
+    metricRelabelings:
+      # Drop high cardinality metrics if needed
+      - sourceLabels: [__name__]
+        regex: 'kv_process_open_fds'
+        action: drop
+  
+  # Grafana dashboard
+  grafanaDashboard:
+    enabled: true
+    labels:
+      grafana_dashboard: "1"
+    annotations:
+      grafana_folder: "KV Responder Production"
+  
+  # Prometheus alerting rules
+  prometheusRules:
+    enabled: true
+    labels:
+      release: prometheus
+    annotations: {}
+
+# Pod annotations for log collection (if using Fluentd/Fluent Bit)
+podAnnotations:
+  fluentbit.io/parser: "json"
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "3000"
+  prometheus.io/path: "/metrics"
+
+# Security context
+podSecurityContext:
+  fsGroup: 1001
+  runAsNonRoot: true
+  runAsUser: 1001
+
+securityContext:
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1001
+  allowPrivilegeEscalation: false
+
+# Network policy for tenant isolation
+networkPolicy:
+  enabled: true
+
+# Node selector for dedicated monitoring nodes (optional)
+nodeSelector:
+  workload-type: "application"
+
+# Tolerations for dedicated nodes (optional)
+tolerations: []
+
+# Affinity rules for better distribution
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - kv-responder
+          - key: ingress-group
+            operator: In
+            values:
+            - production
+        topologyKey: kubernetes.io/hostname

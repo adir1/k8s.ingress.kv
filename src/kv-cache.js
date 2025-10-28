@@ -1,18 +1,26 @@
 const http = require('http');
 
 class KVCache {
-  constructor(discovery) {
+  constructor(discovery, logger, metrics) {
     this.discovery = discovery;
+    this.logger = logger;
+    this.metrics = metrics;
     this.cache = new Map();
     this.replicationFactor = 2; // Number of replicas per key
     
     // Listen for peer changes
     this.discovery.onPeerDiscovered((peer, action) => {
       if (action === 'added') {
-        console.log(`New peer joined cache cluster: ${peer.name}`);
+        this.logger.info({ 
+          peerName: peer.name, 
+          peerIP: peer.ip 
+        }, 'New peer joined cache cluster');
         this.syncWithPeer(peer);
       } else if (action === 'removed') {
-        console.log(`Peer left cache cluster: ${peer.name}`);
+        this.logger.info({ 
+          peerName: peer.name, 
+          peerIP: peer.ip 
+        }, 'Peer left cache cluster');
         this.redistributeKeys();
       }
     });
@@ -71,7 +79,12 @@ class KVCache {
           return value;
         }
       } catch (error) {
-        console.warn(`Failed to get key from peer ${peer.name}:`, error.message);
+        this.logger.warn({ 
+          err: error, 
+          peerName: peer.name, 
+          key 
+        }, 'Failed to get key from peer');
+        this.metrics.recordReplicationOperation('get', 'error');
       }
     }
 
@@ -85,16 +98,21 @@ class KVCache {
     // Replicate to responsible peers
     const responsible = this.getResponsiblePeers(key);
     const promises = responsible.map(peer => 
-      this.setOnPeer(peer, key, value).catch(error => 
-        console.warn(`Failed to replicate to peer ${peer.name}:`, error.message)
-      )
+      this.setOnPeer(peer, key, value).catch(error => {
+        this.logger.warn({ 
+          err: error, 
+          peerName: peer.name, 
+          key 
+        }, 'Failed to replicate to peer');
+        this.metrics.recordReplicationOperation('set', 'error');
+      })
     );
 
     // Wait for at least one successful replication
     try {
       await Promise.race(promises);
     } catch (error) {
-      console.warn('All replications failed, key stored locally only');
+      this.logger.warn({ err: error, key }, 'All replications failed, key stored locally only');
     }
 
     return true;
@@ -107,9 +125,14 @@ class KVCache {
     // Delete from responsible peers
     const responsible = this.getResponsiblePeers(key);
     const promises = responsible.map(peer => 
-      this.deleteFromPeer(peer, key).catch(error => 
-        console.warn(`Failed to delete from peer ${peer.name}:`, error.message)
-      )
+      this.deleteFromPeer(peer, key).catch(error => {
+        this.logger.warn({ 
+          err: error, 
+          peerName: peer.name, 
+          key 
+        }, 'Failed to delete from peer');
+        this.metrics.recordReplicationOperation('delete', 'error');
+      })
     );
 
     await Promise.allSettled(promises);
@@ -126,7 +149,10 @@ class KVCache {
         const peerKeys = await this.getKeysFromPeer(peer);
         peerKeys.forEach(key => allKeys.add(key));
       } catch (error) {
-        console.warn(`Failed to get keys from peer ${peer.name}:`, error.message);
+        this.logger.warn({ 
+          err: error, 
+          peerName: peer.name 
+        }, 'Failed to get keys from peer');
       }
     });
 
@@ -281,7 +307,10 @@ class KVCache {
   async syncWithPeer(peer) {
     try {
       const peerKeys = await this.getKeysFromPeer(peer);
-      console.log(`Syncing ${peerKeys.length} keys with peer ${peer.name}`);
+      this.logger.info({ 
+        keyCount: peerKeys.length, 
+        peerName: peer.name 
+      }, 'Syncing keys with peer');
       
       // Sync keys that we should be responsible for
       for (const key of peerKeys) {
@@ -292,12 +321,19 @@ class KVCache {
               this.cache.set(key, value);
             }
           } catch (error) {
-            console.warn(`Failed to sync key ${key}:`, error.message);
+            this.logger.warn({ 
+              err: error, 
+              key, 
+              peerName: peer.name 
+            }, 'Failed to sync key');
           }
         }
       }
     } catch (error) {
-      console.warn(`Failed to sync with peer ${peer.name}:`, error.message);
+      this.logger.warn({ 
+        err: error, 
+        peerName: peer.name 
+      }, 'Failed to sync with peer');
     }
   }
 
@@ -316,7 +352,11 @@ class KVCache {
           try {
             await this.setOnPeer(peer, key, value);
           } catch (error) {
-            console.warn(`Failed to redistribute key ${key}:`, error.message);
+            this.logger.warn({ 
+              err: error, 
+              key, 
+              peerName: peer.name 
+            }, 'Failed to redistribute key');
           }
         }
       }

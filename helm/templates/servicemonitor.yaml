@@ -23,10 +23,20 @@ spec:
     path: /metrics
     interval: {{ .Values.metrics.serviceMonitor.interval | default "30s" }}
     scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout | default "10s" }}
-    {{- with .Values.metrics.serviceMonitor.relabelings }}
     relabelings:
+      # Add tenant label to all metrics
+      - sourceLabels: []
+        targetLabel: tenant
+        replacement: {{ .Values.tenant }}
+      # Add namespace label
+      - sourceLabels: [__meta_kubernetes_namespace]
+        targetLabel: namespace
+      # Add pod name label
+      - sourceLabels: [__meta_kubernetes_pod_name]
+        targetLabel: pod
+      {{- with .Values.metrics.serviceMonitor.relabelings }}
       {{- toYaml . | nindent 6 }}
-    {{- end }}
+      {{- end }}
     {{- with .Values.metrics.serviceMonitor.metricRelabelings }}
     metricRelabelings:
       {{- toYaml . | nindent 6 }}

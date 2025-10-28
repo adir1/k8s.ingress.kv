@@ -12,7 +12,7 @@ keywords:
   - multi-tenant
   - cache
   - discovery
-home: https://github.com/example/kv-responder
+home: https://github.com/adir1/k8s.ingress.kv
 maintainers:
-  - name: Developer
+  - name: Adi R
     email: dev@example.com

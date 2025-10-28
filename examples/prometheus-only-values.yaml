@@ -1,0 +1,124 @@
+# Configuration for clusters with Prometheus but no Jaeger/Elasticsearch
+# This gives you metrics monitoring without distributed tracing or log aggregation
+
+tenant: "production"
+
+replicaCount: 3
+
+image:
+  repository: kv-responder-oci
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 15
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+  hosts:
+    - host: "kv-api.example.com"
+      paths:
+        - path: /production(/|$)(.*)
+          pathType: Prefix
+
+env:
+  PORT: "3000"
+  NODE_ENV: "production"
+
+# Structured logging to stdout/stderr
+logging:
+  level: "info"
+  format: "json"
+
+# Disable tracing completely - no Jaeger needed
+tracing:
+  enabled: false
+  jaeger:
+    enabled: false
+
+# Enable Prometheus metrics only
+metrics:
+  enabled: true
+  
+  # Enable if you have Prometheus with ServiceMonitor CRD
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+    labels:
+      release: prometheus  # Match your Prometheus release labels
+    relabelings:
+      - sourceLabels: []
+        targetLabel: cluster
+        replacement: "production"
+  
+  # Disable Grafana dashboard (enable if you add Grafana later)
+  grafanaDashboard:
+    enabled: false
+  
+  # Disable alerting rules (enable if you add AlertManager later)
+  prometheusRules:
+    enabled: false
+
+# Pod annotations for Prometheus scraping (alternative to ServiceMonitor)
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "3000"
+  prometheus.io/path: "/metrics"
+
+podSecurityContext:
+  fsGroup: 1001
+  runAsNonRoot: true
+  runAsUser: 1001
+
+securityContext:
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1001
+  allowPrivilegeEscalation: false
+
+networkPolicy:
+  enabled: true  # Enable for production isolation
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - kv-responder
+          - key: ingress-group
+            operator: In
+            values:
+            - production
+        topologyKey: kubernetes.io/hostname

@@ -106,8 +106,18 @@ helm install kv-responder-api ./helm -f examples/api-values.yaml
 helm install kv-responder-api ./helm -f examples/api-values.yaml --set networkPolicy.enabled=true
 
 # Multiple tenants
-helm install kv-responder-api ./helm -f examples/api-values.yaml
-helm install kv-responder-cache ./helm -f examples/cache-values.yaml
+helm install kv-responder-t1 ./helm -f examples/t1-values.yaml
+helm install kv-responder-t2 ./helm -f examples/t2-values.yaml
+
+# Debugging Helm
+helm install kv-responder-d1 ./helm -f examples/d1-values.yaml --dry-run --debug
+helm install kv-responder-d1 ./helm --dry-run --debug --set tenant=d1
+
+# Debugging Template Only
+helm template kv-responder-d2 ./helm
+
+# See all values including defaults
+helm get values kv-responder-d2 --all
 ```
 
 ## Configuration

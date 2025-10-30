@@ -8,9 +8,9 @@ tenant: "default"
 replicaCount: 3
 
 image:
-  repository: kv-responder-oci
+  repository: ghcr.io/OWNER/REPO_NAME  # Replace OWNER/REPO_NAME with your GitHub username/repo
   pullPolicy: IfNotPresent
-  tag: "latest"
+  tag: "latest"  # Use specific versions in production: "1.0.0"
 
 imagePullSecrets: []
 nameOverride: ""

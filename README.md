@@ -23,8 +23,9 @@ that scale independently.
 ## Quick Start
 
 ```bash
-# Build the container
-docker build -t kv-responder-oci:latest .
+# Build and publish container (automated via GitHub Actions)
+git tag v1.0.0
+git push origin v1.0.0
 
 # Deploy a tenant
 helm install kv-responder-analytics ./helm --set tenant=analytics
@@ -101,18 +102,28 @@ needed\
 ## Deployment Examples
 
 ```bash
-# Basic deployment
+# Basic deployment (uses latest tag)
 helm install kv-responder-api ./helm --set tenant=api
+
+# Production with specific version
+helm install kv-responder-api ./helm \
+  --set tenant=api \
+  --set image.tag=1.0.0
 
 # Production with auto-scaling
 helm install kv-responder-api ./helm -f examples/api-values.yaml
 
+# Development with branch-specific image
+helm install kv-responder-dev ./helm \
+  --set tenant=dev \
+  --set image.tag=develop
+
 # With network isolation
 helm install kv-responder-api ./helm -f examples/api-values.yaml --set networkPolicy.enabled=true
 
-# Multiple tenants
-helm install kv-responder-t1 ./helm -f examples/t1-values.yaml
-helm install kv-responder-t2 ./helm -f examples/t2-values.yaml
+# Multiple tenants with different versions
+helm install kv-responder-t1 ./helm -f examples/t1-values.yaml --set image.tag=1.0.0
+helm install kv-responder-t2 ./helm -f examples/t2-values.yaml --set image.tag=1.1.0
 
 # Debugging Helm
 helm install kv-responder-d1 ./helm -f examples/d1-values.yaml --dry-run --debug
@@ -156,6 +167,78 @@ helm install kv-responder-prod ./helm \
 All metrics include tenant labels for multi-tenant monitoring.
 
 See [docs/MONITORING.md](docs/MONITORING.md) for complete setup guide.
+
+## Container Versioning & CI/CD
+
+### Automated Container Publishing
+
+The project uses GitHub Actions to automatically build and publish containers to GitHub Container Registry (GHCR):
+
+- **Triggers**: Pushes to `main`/`develop`, Git tags, and pull requests
+- **Registry**: `ghcr.io/owner/repo-name`
+- **Multi-arch**: Builds for `linux/amd64` and `linux/arm64`
+
+### Versioning Strategy
+
+The CI/CD pipeline creates multiple image tags:
+
+| Trigger | Image Tags Created |
+|---------|-------------------|
+| `git tag v1.0.0` | `1.0.0`, `1.0`, `latest` |
+| Push to `main` | `main`, `latest`, `1.0.0` (from package.json) |
+| Push to `develop` | `develop`, `develop-abc1234` |
+| Feature branch | `feature-xyz`, `feature-xyz-abc1234` |
+
+### Recommended Workflow
+
+#### For Development
+```bash
+# Push to feature branch - creates feature-specific tags
+git checkout -b feature/new-cache
+git push origin feature/new-cache
+
+# Deploy development version
+helm install kv-test ./helm --set image.tag=feature-new-cache
+```
+
+#### For Production Releases
+```bash
+# 1. Update version in package.json
+npm version patch  # or minor/major
+
+# 2. Create and push git tag
+git tag v$(node -p "require('./package.json').version")
+git push origin main --tags
+
+# 3. Deploy specific version (recommended for production)
+helm install kv-prod ./helm --set image.tag=1.0.0
+```
+
+#### Quick Release Script
+```bash
+#!/bin/bash
+# release.sh - Automated release workflow
+npm version ${1:-patch}
+VERSION=$(node -p "require('./package.json').version")
+git tag v$VERSION
+git push origin main --tags
+echo "Released v$VERSION - check GitHub Actions for build status"
+```
+
+### Container Configuration Files
+
+- **Dockerfile**: Multi-stage Node.js 22 Alpine build
+- **GitHub Actions**: `.github/workflows/build-and-publish.yml`
+- **Helm Values**: `helm/values.yaml` (update repository field)
+
+### Image Pull Configuration
+
+Update `helm/values.yaml` with your repository:
+```yaml
+image:
+  repository: ghcr.io/yourusername/your-repo-name
+  tag: "1.0.0"  # Use specific versions in production
+```
 
 ## Configuration
 
